@@ -1,14 +1,15 @@
 import json
 import re
 import os
-import io # Used to read file bytes
-import base64 # Used to decode the file from the request
+import io
+import base64
+import traceback # For detailed error logging
 from datetime import datetime, time
 from pypdf import PdfReader
-from numbers import Number # Imported from views.py
+from numbers import Number # Imported from original views.py
 
 # --- InOutHandle Class ---
-# (Copied directly from your 'TimeExtractor_pdf-main/timeExtract/timeTool/views.py')
+# (Copied directly from 'TimeExtractor_pdf-main/timeExtract/timeTool/views.py')
 class InOutHandle():
     time_pattern = re.compile(r'^\d{2}:\d{2}:\d{2}$')    
     def findTimeIn(self,array):
@@ -99,7 +100,7 @@ class InOutHandle():
         return round(total_flex_hours, 2)
 
 # --- PdfHandler Class ---
-# (Adapted from your 'TimeExtractor_pdf-main/timeExtract/timeTool/views.py')
+# (Adapted from 'TimeExtractor_pdf-main/timeExtract/timeTool/views.py')
 class PdfHandler():
     def __init__(self, file_bytes) :
         # Instead of a file_path, it now accepts the raw bytes of the file
@@ -145,8 +146,6 @@ class PdfHandler():
             new_time_array.pop(0) 
         return new_time_array
     
-    # REMOVED: check_output_exist() - We don't write files anymore
-
     def convertToDict(self): 
         # MODIFIED: This function no longer writes a file.
         # It now returns all the calculated data.
@@ -184,7 +183,8 @@ class PdfHandler():
                 else: 
                     message = "Not Worked"
             
-            if item_data_list[-4] == "8,00":
+            # Check for 'paidHours'
+            if len(item_data_list) >= 4 and item_data_list[-4] == "8,00":
                 actual_working_hour = 8.00
             
             if len(item_data_list) >= 8:  
@@ -249,30 +249,37 @@ class PdfHandler():
                 "total_day": total_day_entries,
                 "worked_day": worked_day,
                 "total_month": total_month_summary,
-                "calculated_adjusted_hours": calculated_adjusted_hours,
+                "calculated_adjusted_hours": total_adjusted_hours,
                 "total_flex": total_flex
             }
         }
 
 # --- The main Netlify Function Handler ---
 def handler(event, context):
+    # This is the main function Netlify will run
     try:
         # 1. Parse the incoming request body
+        # We expect a JSON body with a 'file' key
         body = json.loads(event.get('body', '{}'))
         file_data_base64 = body.get('file')
 
         if not file_data_base64:
+            print("ERROR: No 'file' key found in JSON body.")
             return {
                 'statusCode': 400,
-                'body': json.dumps({'error': 'No file data found.'})
+                'body': json.dumps({'error': 'No file data found in request.'})
             }
 
         # 2. Decode the Base64 file data into raw bytes
+        print("File data found, attempting to decode Base64...")
         file_bytes = base64.b64decode(file_data_base64)
+        print(f"Successfully decoded file, {len(file_bytes)} bytes.")
 
         # 3. Process the file in memory
+        print("Starting PDF processing...")
         pdf_handler = PdfHandler(file_bytes)
-        results = pdf_handler.convertToDict() # This now returns our data
+        results = pdf_handler.convertToDict() # This returns our data dict
+        print("Successfully processed PDF and generated results.")
 
         # 4. Return the successful JSON response
         return {
@@ -284,8 +291,19 @@ def handler(event, context):
         }
         
     except Exception as e:
-        print(f"Error: {e}") # This will show in Netlify function logs
+        # 5. CATCH THE CRASH
+        # If anything in the 'try' block fails, this will run.
+        print(f"!!! FUNCTION CRASHED !!!")
+        print(f"Error: {e}")
+        
+        # This logs the full Python error traceback
+        print(traceback.format_exc()) 
+        
+        # Return a valid JSON error message
         return {
             'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
+            'body': json.dumps({
+                'error': f"Server error: {str(e)}",
+                'trace': traceback.format_exc() # Send traceback for debugging
+            })
         }
