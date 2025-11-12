@@ -9,7 +9,7 @@ from pypdf import PdfReader
 from numbers import Number # Imported from original views.py
 
 # --- InOutHandle Class ---
-# (Copied directly from 'TimeExtractor_pdf-main/timeExtract/timeTool/views.py')
+# (This class is unchanged)
 class InOutHandle():
     time_pattern = re.compile(r'^\d{2}:\d{2}:\d{2}$')    
     def findTimeIn(self,array):
@@ -100,14 +100,12 @@ class InOutHandle():
         return round(total_flex_hours, 2)
 
 # --- PdfHandler Class ---
-# (Adapted from 'TimeExtractor_pdf-main/timeExtract/timeTool/views.py')
+# (This class is unchanged)
 class PdfHandler():
     def __init__(self, file_bytes) :
-        # Instead of a file_path, it now accepts the raw bytes of the file
         self.file_bytes = file_bytes
 
     def extractText(self):
-        # Read the file from an in-memory bytes buffer
         reader = PdfReader(io.BytesIO(self.file_bytes))
         time_array = []
         for _,page in enumerate(reader.pages):
@@ -121,7 +119,6 @@ class PdfHandler():
         return time_array
     
     def extractTime(self, line: str):
-        # (This function is identical to your views.py)
         new_array = []
         filter_array = ["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26","27","28","29","30","31","32"]
         if len(line) >= 2:  
@@ -133,7 +130,6 @@ class PdfHandler():
         return new_array
 
     def breakArray(self): 
-        # (This function is identical to your views.py)
         time_array = self.extractText()
         new_time_array = []
         for item_list in time_array: 
@@ -147,9 +143,6 @@ class PdfHandler():
         return new_time_array
     
     def convertToDict(self): 
-        # MODIFIED: This function no longer writes a file.
-        # It now returns all the calculated data.
-        
         new_time_array = self.breakArray()
         all_time_dict = []
         total_duration_sum = 0 
@@ -183,7 +176,6 @@ class PdfHandler():
                 else: 
                     message = "Not Worked"
             
-            # Check for 'paidHours'
             if len(item_data_list) >= 4 and item_data_list[-4] == "8,00":
                 actual_working_hour = 8.00
             
@@ -207,7 +199,6 @@ class PdfHandler():
             else:
                 print(f"Skipping item due to insufficient data: {item_data_list}")
         
-        # (This calculation loop is identical to your views.py)
         for i, record in enumerate(all_time_dict):
             if not isinstance(record, dict): continue
             normal_hours_str = record.get("normalWorkingHours")
@@ -232,15 +223,12 @@ class PdfHandler():
                 
             total_adjusted_hours += value_to_add
         
-        # --- NEW: Calculate all totals ---
-        # (This logic was in your 'index' view, now it's here)
         leave_handle = InOutHandle()
         total_leave = leave_handle.count_all_time(all_time_dict)
         total_flex = leave_handle.calculate_flex_total(all_time_dict)
         total_month_summary = total_leave + total_duration_sum
         total_day_entries = len(all_time_dict)
         
-        # --- NEW: Return all data in a single dictionary ---
         return {
             "time_dict": all_time_dict,
             "summary": {
@@ -254,56 +242,84 @@ class PdfHandler():
             }
         }
 
-# --- The main Netlify Function Handler ---
+# --- The main Netlify Function Handler (UPDATED) ---
 def handler(event, context):
-    # This is the main function Netlify will run
-    try:
-        # 1. Parse the incoming request body
-        # We expect a JSON body with a 'file' key
-        body = json.loads(event.get('body', '{}'))
-        file_data_base64 = body.get('file')
+    
+    # --- NEW: Handle CORS Preflight (OPTIONS request) ---
+    # This is sent by the browser before the POST request to check permissions
+    http_method = event.get('httpMethod')
+    
+    if http_method == 'OPTIONS':
+        print("Received OPTIONS request, sending CORS headers.")
+        return {
+            'statusCode': 204, # 204 No Content
+            'headers': {
+                'Access-Control-Allow-Origin': '*', # Allow all origins
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            },
+            'body': ''
+        }
 
-        if not file_data_base64:
-            print("ERROR: No 'file' key found in JSON body.")
+    # --- Handle POST request (Your original code) ---
+    if http_method == 'POST':
+        try:
+            # 1. Parse the incoming request body
+            body = json.loads(event.get('body', '{}'))
+            file_data_base64 = body.get('file')
+
+            if not file_data_base64:
+                print("ERROR: No 'file' key found in JSON body.")
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({'error': 'No file data found in request.'})
+                }
+
+            # 2. Decode the Base64 file data into raw bytes
+            print("File data found, attempting to decode Base64...")
+            file_bytes = base64.b64decode(file_data_base64)
+            print(f"Successfully decoded file, {len(file_bytes)} bytes.")
+
+            # 3. Process the file in memory
+            print("Starting PDF processing...")
+            pdf_handler = PdfHandler(file_bytes)
+            results = pdf_handler.convertToDict() 
+            print("Successfully processed PDF and generated results.")
+
+            # 4. Return the successful JSON response
             return {
-                'statusCode': 400,
-                'body': json.dumps({'error': 'No file data found in request.'})
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*' # Also add origin header to POST response
+                },
+                'body': json.dumps(results)
+            }
+            
+        except Exception as e:
+            # 5. CATCH THE CRASH
+            print(f"!!! FUNCTION CRASHED !!!")
+            print(f"Error: {e}")
+            print(traceback.format_exc()) 
+            
+            return {
+                'statusCode': 500,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({
+                    'error': f"Server error: {str(e)}",
+                    'trace': traceback.format_exc() 
+                })
             }
 
-        # 2. Decode the Base64 file data into raw bytes
-        print("File data found, attempting to decode Base64...")
-        file_bytes = base64.b64decode(file_data_base64)
-        print(f"Successfully decoded file, {len(file_bytes)} bytes.")
-
-        # 3. Process the file in memory
-        print("Starting PDF processing...")
-        pdf_handler = PdfHandler(file_bytes)
-        results = pdf_handler.convertToDict() # This returns our data dict
-        print("Successfully processed PDF and generated results.")
-
-        # 4. Return the successful JSON response
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json'
-            },
-            'body': json.dumps(results)
-        }
-        
-    except Exception as e:
-        # 5. CATCH THE CRASH
-        # If anything in the 'try' block fails, this will run.
-        print(f"!!! FUNCTION CRASHED !!!")
-        print(f"Error: {e}")
-        
-        # This logs the full Python error traceback
-        print(traceback.format_exc()) 
-        
-        # Return a valid JSON error message
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': f"Server error: {str(e)}",
-                'trace': traceback.format_exc() # Send traceback for debugging
-            })
-        }
+    # --- Handle other methods (like GET) ---
+    print(f"Received unallowed method: {http_method}")
+    return {
+        'statusCode': 405,
+        'headers': {
+            'Access-Control-Allow-Origin': '*'
+        },
+        'body': json.dumps({'error': f"Method {http_method} Not Allowed"})
+    }
