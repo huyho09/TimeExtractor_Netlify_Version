@@ -5,5 +5,8 @@
   # This is the directory where Netlify will find your serverless functions
   functions = "netlify/functions"
 
+# This specifies settings for the "extract" function
 [functions."extract"]
+  # Sets the function timeout to 20s (up from 10s)
+  # This gives your PDF processing more time
   timeout = 20
