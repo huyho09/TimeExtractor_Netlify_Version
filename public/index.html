@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Time Tool</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <h1 class="mb-4">Time Data</h1>
+
+        <form id="upload-form" method="POST" enctype="multipart/form-data" class="mb-4">
+            <div class="mb-3">
+                <label for="pdf_file" class="form-label">Upload TimeSheet</label>
+                <input type="file" id="pdf_file" name="pdf_file" class="form-control" accept="application/pdf" required>
+            </div>
+            
+            <button type="submit" id="upload-button" class="btn btn-primary">
+                Upload
+            </button>
+            <div id="loading-spinner" class="spinner-border text-primary ms-2" role="status" style="display: none;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </form>
+        
+        <div id="error-alert" class="alert alert-danger" role="alert" style="display: none;">
+          An error occurred while processing your file.
+        </div>
+
+        <div class="card" style="overflow: auto; width: 100%; height: 450px;">
+            <div class="card-body">
+                <h5 class="card-title">Details</h5>
+                <div class="table-responsive">
+                    <table class="table table-bordered table-striped">
+                        <thead class="table-dark">
+                            <tr>
+                                <th style="width: 100px;">Date</th>
+                                <th>DWS</th>
+                                <th>Time-in</th>
+                                <th>Time-out</th>
+                                <th>OT Hours (Leave in Lieu)</th>
+                                <th>OT Hours (Cash Payment)</th>
+                                <th>Unpaid Hours</th>
+                
+                                <th>Paid Hours</th>
+                                <th>Missing Hours</th>
+                                <th>Night Shift Hours</th>
+                                <th>Normal Working Hours</th>
+                                <th>Message</th>
+                                <th>Actual Working Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-table-body">
+                            </tbody>
+                    </table>
+                </div>
+                
+                <div class = "row">
+                    <div class = "col">
+                        <p>Total Paid Hours: <span id="total-leave" class="fw-bold">0.0</span></p>
+                    </div>
+                    <div class = "col">
+                        <p>Total Work Hours: <span id="total-time" class="fw-bold">0.0</span></p>
+                    </div>
+                    <div class = "col">
+                        <p>Total worked Day: <span id="worked-day" class="fw-bold">0</span>/<span id="total-day" class="fw-bold">0</span></p>
+                    </div>
+                    <div class = "col">
+                        <p>Total : <span id="total-month" class="fw-bold">0.0</span></p>
+                    </div>
+                    <div class = "col">
+                        <p>Flex Hours (Over/Under): <span id="total-flex" class="fw-bold">0.0</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Get references to all the elements we need to interact with
+        const uploadForm = document.getElementById('upload-form');
+        const uploadButton = document.getElementById('upload-button');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const errorAlert = document.getElementById('error-alert');
+        const pdfFileInput = document.getElementById('pdf_file');
+        const tableBody = document.getElementById('results-table-body');
+        
+        // Summary elements
+        const totalLeaveEl = document.getElementById('total-leave');
+        const totalTimeEl = document.getElementById('total-time');
+        const workedDayEl = document.getElementById('worked-day');
+        const totalDayEl = document.getElementById('total-day');
+        const totalMonthEl = document.getElementById('total-month');
+        const totalFlexEl = document.getElementById('total-flex');
+
+        // Listen for the form to be submitted
+        uploadForm.addEventListener('submit', async (event) => {
+            // Stop the form from submitting the traditional way
+            event.preventDefault(); 
+            
+            // Show loading, hide old errors, disable button
+            setLoading(true);
+            
+            try {
+                const file = pdfFileInput.files[0];
+                if (!file) {
+                    throw new Error("No file selected.");
+                }
+
+                // 1. Read the file as Base64
+                // This is required to send the file in a JSON body
+                const base64File = await fileToBase64(file);
+                
+                // 2. Send the file to our Netlify Function
+                // The URL '/.netlify/functions/extract' is handled by Netlify
+                const response = await fetch('/.netlify/functions/extract', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        file: base64File // Send the base64 string
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Server error');
+                }
+
+                // 3. Get the JSON results back from the function
+                const data = await response.json();
+                
+                // 4. Update the HTML with the new data
+                updateTable(data.time_dict);
+                updateSummary(data.summary);
+
+            } catch (error) {
+                console.error('Upload error:', error);
+                showError(error.message);
+            } finally {
+                // Always stop loading
+                setLoading(false);
+            }
+        });
+
+        // This function builds the HTML table rows
+        function updateTable(timeDict) {
+            // Clear old results
+            tableBody.innerHTML = '';
+            
+            if (!timeDict || timeDict.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="13" class="text-center">No data found.</td></tr>';
+                return;
+            }
+            
+            // Loop over data and create a row for each item
+            // This replaces the '{{ for ... }}' loop
+            for (const item of timeDict) {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${item.date}</td>
+                    <td>${item.dws}</td>
+                    <td>${item.timeIn || 'N/A'}</td>
+                    <td>${item.timeOut || 'N/A'}</td>
+                    <td>${item.otHour_leaveInLieu}</td>
+                    <td>${item.otHour_cashPayment}</td>
+                    <td>${item.unpaidHours}</td>
+                    <td>${item.paidHours}</td>
+                    <td>${item.missingHours}</td>
+                    <td>${item.nightShiftHours}</td>
+                    <td>${item.normalWorkingHours}</td>
+                    <td>${item.message}</td>
+                    <td>${item.actualWorkingHours}</td>
+                `;
+                tableBody.appendChild(row);
+            }
+        }
+        
+        // This function updates the summary row
+        function updateSummary(summary) {
+            totalLeaveEl.textContent = summary.total_leave.toFixed(2);
+            totalTimeEl.textContent = summary.total_time.toFixed(2);
+            workedDayEl.textContent = summary.worked_day;
+            totalDayEl.textContent = summary.total_day;
+            totalMonthEl.textContent = summary.total_month.toFixed(2);
+            totalFlexEl.textContent = summary.total_flex.toFixed(2);
+        }
+
+        // --- Helper Functions ---
+
+        function setLoading(isLoading) {
+            if (isLoading) {
+                uploadButton.disabled = true;
+                loadingSpinner.style.display = 'inline-block';
+                errorAlert.style.display = 'none';
+            } else {
+                uploadButton.disabled = false;
+                loadingSpinner.style.display = 'none';
+            }
+        }
+        
+        function showError(message) {
+            errorAlert.textContent = `Error: ${message}`;
+            errorAlert.style.display = 'block';
+        }
+        
+        // Utility to read a file and convert it to a Base64 string
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    // Get the result, split off the "data:..." prefix
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+    </script>
+</body>
+</html>

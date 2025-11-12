@@ -1,0 +1,11 @@
+[build]
+  # This is the directory Netlify will deploy as your static site
+  publish = "public"
+  
+  # This is the directory where Netlify will find your serverless functions
+  functions = "netlify/functions"
+
+[functions]
+  # Sets a longer timeout for functions, just in case PDF processing is slow.
+  # Default is 10s, this gives it 20s.
+  timeout = 20
